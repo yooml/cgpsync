@@ -1,0 +1,12 @@
+{
+  "host": "yourhost",
+  "user": "gpadmin",
+  "port": 2345,
+  "password": "yourpassword",
+  "dbname": "gpdb",
+  "destination_host": "yourhost",
+  "destination_user": "gpadmin",
+  "destination_port": 2345,
+  "destination_password": "yourpassword",
+  "destination_dbname":"testdb"
+}
