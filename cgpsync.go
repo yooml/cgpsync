@@ -195,12 +195,22 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 			log.Println("开始同步表：",i.child_tbl_name)
 			copy_from(sql_copyfrom,i.child_tbl_name,ch4,dbconfig)
 		}()
-		sql:=fmt.Sprintf("COPY %s to '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
+		/*sql:=fmt.Sprintf("COPY %s to '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
 		_,err:=db.Exec(sql)
 		if err != nil {
 			panic(err)
-		}
+		}*/
 		//log.Println(ro)
+		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy persons to stdout' > /tmp/cgpsync/%d.pipe",
+			dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("dbname"),m)
+
+		//echo:=`su - gpadmin -c "PGOPTIONS='-c gp_session_role=utility' psql -h 47.98.173.194 -p 5432 -Ugpadmin -d testdb -c 'copy persons to stdout' > /tmp/cgpsync/0.pipe"`
+		py :=exec.Command("/bin/bash","-c",echo)
+		stderr := &bytes.Buffer{}
+		py.Stderr = stderr
+		if err := py.Run(); err != nil {
+			fmt.Println("Error: ", err, "|", stderr.String())
+		}
 		<-ch4
 		ch2<-i.child_tbl_name
 	}
@@ -224,6 +234,12 @@ func copy_from(sql_copyfrom string,table_name string,ch4 chan string,dbconfig *v
 	if err != nil {
 		panic(err)
 	}
+	/*py :=exec.Command("/bin/bash","-c","ssh gpadmin@47.98.174.109 'cat /tmp/cgpsync/0.pipe'|xargs -I {} echo {} > /tmp/cgpsync/0.pipe")
+	stderr := &bytes.Buffer{}
+	py.Stderr = stderr
+	if err := py.Run(); err != nil {
+		fmt.Println("Error: ", err, "|", stderr.String())
+	}*/
 	_,err=db.Exec(sql_copyfrom)
 	if err != nil {
 		panic(err)
