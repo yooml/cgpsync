@@ -26,7 +26,7 @@ go run cgpsync.go -h
 
 #### 3.配置要求
 
-需要在root账号下使用，配置文件名config.json，需要放在程序同一目录下，参数如下
+cgpsync需要放在目标机器并且在root账号下使用，配置文件名config.json，需要放在程序同一目录下，参数如下
 ```
 {
   "host": "yourhost",
@@ -57,8 +57,17 @@ go run cgpsync.go -h
 
 #### 5.注意事项
 1.cgpsync有使用到视图v_gp_range_partition_meta，创建此视图的sql如下：
-```
+```sql
 create or replace view v_gp_range_partition_meta as  SELECT pp.parrelid::regclass table_name,pr1.parchildrelid::regclass child_tbl_name,pr1.parname as partition_name,pr1.parruleord as partitionposition,translate(pg_get_expr(pr1.parrangestart,pr1.parchildrelid),'-'':date character varying bpchar numeric double percision timestamp without time zone','') as partitionrangestart,translate(pg_get_expr(pr1.parrangeend,pr1.parchildrelid),'-'':date character varying bpchar numeric double percision timestamp without time zone','') as partitionrangeend,substring(parrangeend,'consttype ([0-9]+)')::integer::regtype rangetype FROM  pg_partition pp, pg_partition_rule pr1 where pp.paristemplate = false and pr1.paroid=pp.oid and pp.parkind = 'r';
 ```
+还有检查是否之前同步过的的表：
+```sql
+create table sync_table
+(
+table_name varchar(64),
+end_tm varchar(64)
+);
+```
+以上两条sql都需要在destination_dbname所在的gp库中执行，且此程序暂时只能在destination_host下执行。
 
 2.同步的目标子表会被truncate清空以确保同步数据的一致。

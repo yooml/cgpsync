@@ -188,12 +188,12 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 	//var test []byte
 	for i :=range ch3{
 		ch4:=make(chan string,1)
-		time.Sleep(time.Second)
+		//time.Sleep(time.Second)
 		sql_copyfrom:=fmt.Sprintf("copy %s from '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
 
 		go func() {
-			log.Println("开始同步表：",i.child_tbl_name)
-			copy_from(sql_copyfrom,i.child_tbl_name,ch4,dbconfig)
+			log.Println("开始同步表：",i.table_name,".",i.child_tbl_name)
+			copy_from(sql_copyfrom,i.child_tbl_name,ch4,dbconfig,i.table_name)
 		}()
 		/*sql:=fmt.Sprintf("COPY %s to '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
 		_,err:=db.Exec(sql)
@@ -216,7 +216,7 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 	}
 }
 
-func copy_from(sql_copyfrom string,table_name string,ch4 chan string,dbconfig *viper.Viper)  {
+func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,dbconfig *viper.Viper,table_name string)  {
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable",
 		dbconfig.GetString("destination_host"), dbconfig.GetInt("destination_port"), dbconfig.GetString("destination_user"), dbconfig.GetString("destination_password"), dbconfig.GetString("destination_dbname"))
@@ -229,7 +229,7 @@ func copy_from(sql_copyfrom string,table_name string,ch4 chan string,dbconfig *v
 		panic(err)
 	}
 	//sql_copyfrom:=fmt.Sprintf("copy persons from '/tmp/cgpsync/%d.pipe';",m)
-	sql_truncate_table:=fmt.Sprintf("truncate table %s",table_name)
+	sql_truncate_table:=fmt.Sprintf("truncate table %s",child_tbl_name)
 	_,err=db.Exec(sql_truncate_table)
 	if err != nil {
 		panic(err)
@@ -244,8 +244,25 @@ func copy_from(sql_copyfrom string,table_name string,ch4 chan string,dbconfig *v
 	if err != nil {
 		panic(err)
 	}else {
+		sql_do_select_sync_table:=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
+
+		start_time:=do_select_sync_table(db,sql_do_select_sync_table)
+		if start_time==""{
+			sql_update_sync_table := fmt.Sprintf("insert into sync_table values('%s', '%s');",table_name,sync_end_time)
+			_,err=db.Exec(sql_update_sync_table)
+			if err != nil {
+				panic(err)
+			}
+		}else {
+			sql_update_sync_table := fmt.Sprintf("update sync_table set end_tm='%s' WHERE table_name='%s'",sync_end_time,table_name)
+			_,err=db.Exec(sql_update_sync_table)
+			if err != nil {
+				panic(err)
+			}
+		}
+
 		ch4<- table_name
-		log.Println("同步完成：",table_name)
+		log.Println("同步完成：",table_name,".",child_tbl_name)
 	}
 }
 
@@ -317,9 +334,12 @@ func dopy(ch chan<- int,ch1 <-chan int,parallel_cnt int,table_name string,v_gp_r
 
 func Connect(dbconfig *viper.Viper)(*sql.DB){
 	//sslmode=verify-full  sslmode=disable
+	/*psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("password"), dbconfig.GetString("dbname"))*/
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable",
-		dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("password"), dbconfig.GetString("dbname"))
+		dbconfig.GetString("destination_host"), dbconfig.GetInt("destination_port"), dbconfig.GetString("destination_user"), dbconfig.GetString("destination_password"), dbconfig.GetString("destination_dbname"))
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		panic(err)
