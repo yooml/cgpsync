@@ -95,7 +95,10 @@ func main()  {
 		ch3<-&v_gp_range_partition_metas[n]
 	}
 
-	makedir:=exec.Command("/bin/bash", "-c","mkdir /tmp/cgpsync \n chmod 777 /tmp/cgpsync")
+	mkdir:=fmt.Sprintf("mkdir /tmp/cgpsync \n chown %s:%s -R /tmp/cgpsync",dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
+
+	log.Println(mkdir)
+	makedir:=exec.Command("/bin/bash", "-c",mkdir)
 	if err := makedir.Run(); err != nil {
 		fmt.Println("Error: ", err, "|", makedir.Stderr)
 	}
@@ -103,19 +106,14 @@ func main()  {
 		//log.Println("不使用python文件")
 		for m:=0;m<parallel_cnt;m++ {
 
-			pipefile:=fmt.Sprintf("/tmp/cgpsync/%d.pipe",m)
-			makepipe:=exec.Command("mkfifo",pipefile)
+			chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%d.pipe \n chown %s:%s -R /tmp/cgpsync",m,dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
+			makepipe:=exec.Command("/bin/bash","-c",chown)
 			stderr := &bytes.Buffer{}
 			makepipe.Stderr=stderr
 			if err := makepipe.Run(); err != nil {
 				fmt.Println("Error: ", err, "|", stderr.String())
 			}
-			chcmd:=fmt.Sprintf("/usr/bin/chown gpadmin:gpadmin %s",pipefile)
-			ch:=exec.Command("/bin/bash","-c",chcmd)
-			ch.Stderr=stderr
-			if err := ch.Run(); err != nil {
-				fmt.Println("Error: ", err, "|",stderr.String() )
-			}
+
 
 			go func(m int) {
 				go_sync_one_part_name(ch3,ch2,m,db,dbConfig)
@@ -201,10 +199,11 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 			panic(err)
 		}*/
 		//log.Println(ro)
-		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy persons to stdout' > /tmp/cgpsync/%d.pipe",
-			dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("dbname"),m)
+		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy %s to stdout' > /tmp/cgpsync/%d.pipe",
+			dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("dbname"),i.child_tbl_name,m)
 
 		//echo:=`su - gpadmin -c "PGOPTIONS='-c gp_session_role=utility' psql -h 47.98.173.194 -p 5432 -Ugpadmin -d testdb -c 'copy persons to stdout' > /tmp/cgpsync/0.pipe"`
+		//log.Println(echo)
 		py :=exec.Command("/bin/bash","-c",echo)
 		stderr := &bytes.Buffer{}
 		py.Stderr = stderr
