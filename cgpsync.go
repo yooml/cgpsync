@@ -85,7 +85,7 @@ func main()  {
 	v_gp_range_partition_metas:=do_select_v_gp_range_partition_meta(db,sql_v)
 
 
-	log.Println("len(v_gp_range_partition_metas)--------",len(v_gp_range_partition_metas))
+	log.Println("len(v_gp_range_partition_metas)准备同步的子表总数：",len(v_gp_range_partition_metas))
 
 	ch2:=make(chan string,30)
 
@@ -95,9 +95,9 @@ func main()  {
 		ch3<-&v_gp_range_partition_metas[n]
 	}
 
-	mkdir:=fmt.Sprintf("mkdir /tmp/cgpsync \n chown %s:%s -R /tmp/cgpsync",dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
-
-	log.Println(mkdir)
+	//mkdir:=fmt.Sprintf("mkdir /tmp/cgpsync \n chown %s:%s -R /tmp/cgpsync",dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
+	mkdir:=fmt.Sprintf("mkdir /tmp/cgpsync")
+	//log.Println(mkdir)
 	makedir:=exec.Command("/bin/bash", "-c",mkdir)
 	if err := makedir.Run(); err != nil {
 		fmt.Println("Error: ", err, "|", makedir.Stderr)
@@ -105,8 +105,9 @@ func main()  {
 	if pyfile==""{
 		//log.Println("不使用python文件")
 		for m:=0;m<parallel_cnt;m++ {
+			//chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%d.pipe \n chown %s:%s -R /tmp/cgpsync",m,dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
 
-			chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%d.pipe \n chown %s:%s -R /tmp/cgpsync",m,dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
+			chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%d.pipe",m)
 			makepipe:=exec.Command("/bin/bash","-c",chown)
 			stderr := &bytes.Buffer{}
 			makepipe.Stderr=stderr
@@ -191,7 +192,7 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 
 		go func() {
 			log.Println("开始同步表：",i.table_name,".",i.child_tbl_name)
-			copy_from(sql_copyfrom,i.child_tbl_name,ch4,dbconfig,i.table_name)
+			copy_from(sql_copyfrom,i.child_tbl_name,ch4,dbconfig,i.table_name,db)
 		}()
 		/*sql:=fmt.Sprintf("COPY %s to '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
 		_,err:=db.Exec(sql)
@@ -215,21 +216,10 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 	}
 }
 
-func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,dbconfig *viper.Viper,table_name string)  {
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
-		"password=%s dbname=%s sslmode=disable",
-		dbconfig.GetString("destination_host"), dbconfig.GetInt("destination_port"), dbconfig.GetString("destination_user"), dbconfig.GetString("destination_password"), dbconfig.GetString("destination_dbname"))
-	db, err := sql.Open("postgres", psqlInfo)
-	if err != nil {
-		panic(err)
-	}
-	err = db.Ping()
-	if err != nil {
-		panic(err)
-	}
+func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,dbconfig *viper.Viper,table_name string,db *sql.DB)  {
 	//sql_copyfrom:=fmt.Sprintf("copy persons from '/tmp/cgpsync/%d.pipe';",m)
 	sql_truncate_table:=fmt.Sprintf("truncate table %s",child_tbl_name)
-	_,err=db.Exec(sql_truncate_table)
+	_,err:=db.Exec(sql_truncate_table)
 	if err != nil {
 		panic(err)
 	}

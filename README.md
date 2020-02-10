@@ -26,7 +26,7 @@ go run cgpsync.go -h
 
 #### 3.配置要求
 
-cgpsync需要放在目标机器并且在root账号下使用，配置文件名config.json，需要放在程序同一目录下，参数如下
+cgpsync需要放在目标机器(destination_host)并且在root或者gp所在账号(如:gpadmin)下使用，配置文件名config.json，需要放在程序同一目录下，参数如下
 ```
 {
   "host": "yourhost",
@@ -49,6 +49,7 @@ cgpsync需要放在目标机器并且在root账号下使用，配置文件名con
  go run cgpsync.go -e 20170201 -t persons -g 5
  ```
 
+同步截止时间为20170201，同步的表名为persons，使用5个goruntine同时在跑。
 
 使用可执行文件类似：
 ```
