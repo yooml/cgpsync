@@ -137,6 +137,22 @@ func main()  {
 		//log.Println(v)
 	}
 
+	//操作完后更新sync_table表中数据
+	sql_do_select_sync_table=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
+	start_time=do_select_sync_table(db,sql_do_select_sync_table)
+	if start_time==""{
+		sql_update_sync_table := fmt.Sprintf("insert into sync_table values('%s', '%s');",table_name,sync_end_time)
+		_,err:=db.Exec(sql_update_sync_table)
+		if err != nil {
+			panic(err)
+		}
+	}else {
+		sql_update_sync_table := fmt.Sprintf("update sync_table set end_tm='%s' WHERE table_name='%s'",sync_end_time,table_name)
+		_,err:=db.Exec(sql_update_sync_table)
+		if err != nil {
+			panic(err)
+		}
+	}
 	//删除工作目录
 	delete_work_dir:=exec.Command("/bin/bash","-c","rm -rf /tmp/cgpsync")
 	stderr := &bytes.Buffer{}
@@ -233,7 +249,7 @@ func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,dbconfi
 	if err != nil {
 		panic(err)
 	}else {
-		sql_do_select_sync_table:=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
+		/*sql_do_select_sync_table:=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
 
 		start_time:=do_select_sync_table(db,sql_do_select_sync_table)
 		if start_time==""{
@@ -248,7 +264,7 @@ func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,dbconfi
 			if err != nil {
 				panic(err)
 			}
-		}
+		}*/
 
 		ch4<- table_name
 		log.Println("同步完成：",table_name,".",child_tbl_name)
