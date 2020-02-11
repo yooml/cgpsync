@@ -81,7 +81,7 @@ func main()  {
 	db := Connect(dbConfig)
 	sql_do_select_sync_table:=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
 	start_time:=do_select_sync_table(db,sql_do_select_sync_table)
-	sql_v:=fmt.Sprintf(`select table_name,child_tbl_name, partitionrangeend from v_gp_range_partition_meta where table_name='%s'::regclass  and partitionrangeend >'%s' and partitionrangeend <'%v' order by partitionrangeend`,table_name,start_time,sync_end_time)
+	sql_v:=fmt.Sprintf(`select table_name,child_tbl_name, partitionrangeend from v_gp_range_partition_meta where table_name='%s'::regclass  and partitionrangeend >'%s' and partitionrangestart <= '%v(64)' order by partitionrangeend`,table_name,start_time,sync_end_time)
 	v_gp_range_partition_metas:=do_select_v_gp_range_partition_meta(db,sql_v)
 
 
