@@ -81,8 +81,14 @@ func main()  {
 	db := Connect(dbConfig)
 	sql_do_select_sync_table:=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
 	start_time:=do_select_sync_table(db,sql_do_select_sync_table)
+	if start_time>sync_end_time{
+		log.Println("end_time值",sync_end_time,"早于原先同步过的时间：",start_time)
+		os.Exit(1)
+	}
 	sql_v:=fmt.Sprintf(`select table_name,child_tbl_name, partitionrangeend from v_gp_range_partition_meta where table_name='%s'::regclass  and partitionrangeend >'%s' and partitionrangestart <= '%v(64)' order by partitionrangeend`,table_name,start_time,sync_end_time)
 	v_gp_range_partition_metas:=do_select_v_gp_range_partition_meta(db,sql_v)
+	all_sql_v:=fmt.Sprintf(`select table_name,child_tbl_name, partitionrangeend from v_gp_range_partition_meta where table_name='%s'::regclass order by partitionrangeend`,table_name)
+	all_v_gp_range_partition_metas:=do_select_v_gp_range_partition_meta(db,all_sql_v)
 
 	ch2:=make(chan string,30)
 	ch3:=make(chan *V_gp_range_partition_meta,len(v_gp_range_partition_metas))
@@ -91,16 +97,15 @@ func main()  {
 		ch3<-&v_gp_range_partition_metas[n]
 	}
 
-	//mkdir:=fmt.Sprintf("mkdir /tmp/cgpsync \n chown %s:%s -R /tmp/cgpsync",dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
+	//创建工作目录
 	mkdir:=fmt.Sprintf("mkdir /tmp/cgpsync")
-	//log.Println(mkdir)
 	makedir:=exec.Command("/bin/bash", "-c",mkdir)
 	if err := makedir.Run(); err != nil {
 		fmt.Println("Error: ", err, "|", makedir.Stderr)
 	}
 
 	//非分区表同步
-	if len(v_gp_range_partition_metas)==0{
+	if len(v_gp_range_partition_metas)==0 && len(all_v_gp_range_partition_metas)==0{
 		chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%s.pipe",table_name)
 		makepipe:=exec.Command("/bin/bash","-c",chown)
 		stderr := &bytes.Buffer{}
@@ -127,10 +132,7 @@ func main()  {
 	}
 
 	if pyfile==""{
-		//log.Println("不使用python文件")
 		for m:=0;m<parallel_cnt;m++ {
-			//chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%d.pipe \n chown %s:%s -R /tmp/cgpsync",m,dbConfig.GetString("destination_user"),dbConfig.GetString("destination_user"))
-
 			chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%d.pipe",m)
 			makepipe:=exec.Command("/bin/bash","-c",chown)
 			stderr := &bytes.Buffer{}
@@ -138,8 +140,6 @@ func main()  {
 			if err := makepipe.Run(); err != nil {
 				fmt.Println("Error: ", err, "|", stderr.String())
 			}
-
-
 			go func(m int) {
 				go_sync_one_part_name(ch3,ch2,m,db,dbConfig)
 			}(m)
@@ -158,7 +158,6 @@ func main()  {
 	// 下面这个for循环的意义就是利用信道的阻塞，一直从信道里取数据，直到取得跟并发数一样的个数的数据，则视为所有goroutines完成。
 	for i:=0;i<len(v_gp_range_partition_metas);i++{
 		<- ch2
-		//log.Println(v)
 	}
 
 	//操作完后更新sync_table表中数据
@@ -171,10 +170,12 @@ func main()  {
 			panic(err)
 		}
 	}else {
-		sql_update_sync_table := fmt.Sprintf("update sync_table set end_tm='%s' WHERE table_name='%s'",sync_end_time,table_name)
-		_,err:=db.Exec(sql_update_sync_table)
-		if err != nil {
-			panic(err)
+		if start_time<sync_end_time{
+			sql_update_sync_table := fmt.Sprintf("update sync_table set end_tm='%s' WHERE table_name='%s'",sync_end_time,table_name)
+			_,err:=db.Exec(sql_update_sync_table)
+			if err != nil {
+				panic(err)
+			}
 		}
 	}
 	//删除工作目录
@@ -201,7 +202,6 @@ func do_select_sync_table(db *sql.DB,sql string) string {
 	if len(sync_types)==0{
 		return ""
 	}
-	//log.Println(sync_types)
 	return sync_types[0].end_tm
 }
 
@@ -218,16 +218,13 @@ func do_select_v_gp_range_partition_meta(db *sql.DB,sql string) []V_gp_range_par
 		v_gp_range_partition_metas = append(v_gp_range_partition_metas, v_gp_range_partition_meta)
 		//如果查询出来子表(child_tbl_name)为空，下面运行的子进程就会卡住，如要修改可以这里做个判断或者下面子进程做判断
 	}
-	//log.Println(v_gp_range_partition_metas)
 	return v_gp_range_partition_metas
 }
 
 
 func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- string,m int,db *sql.DB,dbconfig *viper.Viper)  {
-	//var test []byte
 	for i :=range ch3{
 		ch4:=make(chan string,1)
-		//time.Sleep(time.Second)
 		sql_copyfrom:=fmt.Sprintf("copy %s from '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
 
 		go func() {
@@ -237,7 +234,6 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 
 		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy %s to stdout' > /tmp/cgpsync/%d.pipe",
 			dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("dbname"),i.child_tbl_name,m)
-		//log.Println(echo)
 		py :=exec.Command("/bin/bash","-c",echo)
 		stderr := &bytes.Buffer{}
 		py.Stderr = stderr
@@ -250,7 +246,6 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 }
 
 func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,table_name string,db *sql.DB)  {
-	//sql_copyfrom:=fmt.Sprintf("copy persons from '/tmp/cgpsync/%d.pipe';",m)
 	sql_truncate_table:=fmt.Sprintf("truncate table %s",child_tbl_name)
 	_,err:=db.Exec(sql_truncate_table)
 	if err != nil {
