@@ -30,7 +30,7 @@ func init()  {
 	//flag.BoolVar(&v, "v", false, "show version and exit")
 	flag.IntVar(&parallel_cnt,"g",3,"使用的goruntine（并发）数量，默认3")
 	//flag.StringVar(&pyfile, "py", "", "所使用的外部python文件名（放在同一路径下）")
-	flag.StringVar(&sync_end_time, "e", "", "同步截止时间")
+	flag.StringVar(&sync_end_time, "e", time.Now().Format("20060102"), "同步截止时间")
 	flag.StringVar(&table_name, "t", "", "同步表名")
 
 }
@@ -84,54 +84,7 @@ func main()  {
 	sql_v:=fmt.Sprintf(`select table_name,child_tbl_name, partitionrangeend from v_gp_range_partition_meta where table_name='%s'::regclass  and partitionrangeend >'%s' and partitionrangestart <= '%v(64)' order by partitionrangeend`,table_name,start_time,sync_end_time)
 	v_gp_range_partition_metas:=do_select_v_gp_range_partition_meta(db,sql_v)
 
-
-	log.Println("len(v_gp_range_partition_metas)准备同步的子表总数：",len(v_gp_range_partition_metas))
-
-	if len(v_gp_range_partition_metas)==0{
-		chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%s.pipe",table_name)
-		makepipe:=exec.Command("/bin/bash","-c",chown)
-		stderr := &bytes.Buffer{}
-		makepipe.Stderr=stderr
-		if err := makepipe.Run(); err != nil {
-			fmt.Println("Error: ", err, "|", stderr.String())
-		}
-		//do
-		ch4:=make(chan string,1)
-		//time.Sleep(time.Second)
-		sql_copyfrom:=fmt.Sprintf("copy %s from '/tmp/cgpsync/%s.pipe';",table_name,table_name)
-
-		go func() {
-			log.Println("开始同步表：",table_name)
-			copy_from(sql_copyfrom,table_name,ch4,table_name,db)
-			/*_,err:=db.Exec(sql_copyfrom)
-			if err != nil {
-				panic(err)
-			}else {
-				ch4<- table_name
-				log.Println("同步完成：",table_name)
-			}*/
-		}()
-		/*sql:=fmt.Sprintf("COPY %s to '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
-		_,err:=db.Exec(sql)
-		if err != nil {
-			panic(err)
-		}*/
-		//log.Println(ro)
-		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy %s to stdout' > /tmp/cgpsync/%s.pipe",
-			dbConfig.GetString("host"), dbConfig.GetInt("port"), dbConfig.GetString("user"), dbConfig.GetString("dbname"),table_name,table_name)
-
-		//echo:=`su - gpadmin -c "PGOPTIONS='-c gp_session_role=utility' psql -h 47.98.173.194 -p 5432 -Ugpadmin -d testdb -c 'copy persons to stdout' > /tmp/cgpsync/0.pipe"`
-		log.Println(echo,sql_copyfrom)
-		py :=exec.Command("/bin/bash","-c",echo)
-		stderr = &bytes.Buffer{}
-		py.Stderr = stderr
-		if err := py.Run(); err != nil {
-			fmt.Println("Error: ", err, "|", stderr.String())
-		}
-	}
-
 	ch2:=make(chan string,30)
-
 	ch3:=make(chan *V_gp_range_partition_meta,len(v_gp_range_partition_metas))
 
 	for n:=0;n<len(v_gp_range_partition_metas);n++{
@@ -145,6 +98,34 @@ func main()  {
 	if err := makedir.Run(); err != nil {
 		fmt.Println("Error: ", err, "|", makedir.Stderr)
 	}
+
+	//非分区表同步
+	if len(v_gp_range_partition_metas)==0{
+		chown:=fmt.Sprintf("mkfifo /tmp/cgpsync/%s.pipe",table_name)
+		makepipe:=exec.Command("/bin/bash","-c",chown)
+		stderr := &bytes.Buffer{}
+		makepipe.Stderr=stderr
+		if err := makepipe.Run(); err != nil {
+			fmt.Println("Error: ", err, "|", stderr.String())
+		}
+		ch4:=make(chan string,1)
+		sql_copyfrom:=fmt.Sprintf("copy %s from '/tmp/cgpsync/%s.pipe';",table_name,table_name)
+		go func() {
+			log.Println("开始同步表：",table_name)
+			copy_from(sql_copyfrom,table_name,ch4,table_name,db)
+		}()
+		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy %s to stdout' > /tmp/cgpsync/%s.pipe",
+			dbConfig.GetString("host"), dbConfig.GetInt("port"), dbConfig.GetString("user"), dbConfig.GetString("dbname"),table_name,table_name)
+		py :=exec.Command("/bin/bash","-c",echo)
+		stderr = &bytes.Buffer{}
+		py.Stderr = stderr
+		if err := py.Run(); err != nil {
+			fmt.Println("Error: ", err, "|", stderr.String())
+		}
+	}else {
+		log.Println("len(v_gp_range_partition_metas)准备同步的子表总数：",len(v_gp_range_partition_metas))
+	}
+
 	if pyfile==""{
 		//log.Println("不使用python文件")
 		for m:=0;m<parallel_cnt;m++ {
@@ -253,16 +234,9 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 			log.Println("开始同步表：",i.table_name,".",i.child_tbl_name)
 			copy_from(sql_copyfrom,i.child_tbl_name,ch4,i.table_name,db)
 		}()
-		/*sql:=fmt.Sprintf("COPY %s to '/tmp/cgpsync/%d.pipe';",i.child_tbl_name,m)
-		_,err:=db.Exec(sql)
-		if err != nil {
-			panic(err)
-		}*/
-		//log.Println(ro)
+
 		echo:=fmt.Sprintf("psql -h %s -p %d -U %s -d %s -c 'copy %s to stdout' > /tmp/cgpsync/%d.pipe",
 			dbconfig.GetString("host"), dbconfig.GetInt("port"), dbconfig.GetString("user"), dbconfig.GetString("dbname"),i.child_tbl_name,m)
-
-		//echo:=`su - gpadmin -c "PGOPTIONS='-c gp_session_role=utility' psql -h 47.98.173.194 -p 5432 -Ugpadmin -d testdb -c 'copy persons to stdout' > /tmp/cgpsync/0.pipe"`
 		//log.Println(echo)
 		py :=exec.Command("/bin/bash","-c",echo)
 		stderr := &bytes.Buffer{}
@@ -277,57 +251,32 @@ func go_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 
 func copy_from(sql_copyfrom string,child_tbl_name string,ch4 chan string,table_name string,db *sql.DB)  {
 	//sql_copyfrom:=fmt.Sprintf("copy persons from '/tmp/cgpsync/%d.pipe';",m)
-	/*sql_truncate_table:=fmt.Sprintf("truncate table %s",child_tbl_name)
+	sql_truncate_table:=fmt.Sprintf("truncate table %s",child_tbl_name)
 	_,err:=db.Exec(sql_truncate_table)
 	if err != nil {
 		panic(err)
-	}*/
-	/*py :=exec.Command("/bin/bash","-c","ssh gpadmin@47.98.174.109 'cat /tmp/cgpsync/0.pipe'|xargs -I {} echo {} > /tmp/cgpsync/0.pipe")
-	stderr := &bytes.Buffer{}
-	py.Stderr = stderr
-	if err := py.Run(); err != nil {
-		fmt.Println("Error: ", err, "|", stderr.String())
-	}*/
-	_,err:=db.Exec(sql_copyfrom)
+	}
+	_,err=db.Exec(sql_copyfrom)
 	if err != nil {
 		panic(err)
 	}else {
-		/*sql_do_select_sync_table:=fmt.Sprintf(`select table_name, end_tm from sync_table where table_name='%s'`,table_name)
-
-		start_time:=do_select_sync_table(db,sql_do_select_sync_table)
-		if start_time==""{
-			sql_update_sync_table := fmt.Sprintf("insert into sync_table values('%s', '%s');",table_name,sync_end_time)
-			_,err=db.Exec(sql_update_sync_table)
-			if err != nil {
-				panic(err)
-			}
-		}else {
-			sql_update_sync_table := fmt.Sprintf("update sync_table set end_tm='%s' WHERE table_name='%s'",sync_end_time,table_name)
-			_,err=db.Exec(sql_update_sync_table)
-			if err != nil {
-				panic(err)
-			}
-		}*/
-
 		ch4<- table_name
-		log.Println("同步完成：",table_name,".",child_tbl_name)
+		if child_tbl_name==table_name{
+			log.Println("同步完成：",table_name)
+		}else {
+			log.Println("同步完成：",table_name,".",child_tbl_name)
+		}
 	}
 }
 
 
 func py_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- string,m int)  {
-	//var test []byte
 	for i :=range ch3{
-		//test=append(test,byte(i))
 	time.Sleep(time.Second)
 	dom:=fmt.Sprintf("%d",m)
 	logout:=fmt.Sprintf("开始同步表：%s，所用管道文件：%s.pipe",i.child_tbl_name,dom)
 	log.Println(logout)
 	py :=exec.Command("python",pyfile,dom,i.child_tbl_name,i.partitionrangeend)
-	//py.Stdout = os.Stdout
-	// Run 和 Start只能用一个
-	// Run starts the specified command and waits for it to complete.
-
 	stderr := &bytes.Buffer{}
 	stdout := &bytes.Buffer{}
 	py.Stderr = stderr
@@ -335,13 +284,6 @@ func py_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 	if err := py.Run(); err != nil {
 		fmt.Println("Error: ", err, "|", stderr.String())
 	} else {
-		//ch3<-part_name
-		/*buf := bytes.NewBuffer(test)
-		var i2 int
-		binary.Read(buf, binary.BigEndian, &i2)
-		fmt.Println(i2)     // 511
-
-		 */
 		ch2<-i.child_tbl_name
 		fmt.Println(stdout.String())
 	}
@@ -350,18 +292,11 @@ func py_sync_one_part_name(ch3 <-chan *V_gp_range_partition_meta,ch2 chan<- stri
 
 func dopy(ch chan<- int,ch1 <-chan int,parallel_cnt int,table_name string,v_gp_range_partition_metas []V_gp_range_partition_meta)  {
 	var test []byte
-	//var v_meta V_gp_range_partition_meta
 	for _,v := range v_gp_range_partition_metas{
 
 		test=append(test,byte(1))
-		//log.Println(test)
 		doo:=fmt.Sprintf("%v",parallel_cnt)
-		//log.Println(doo)
 		py :=exec.Command("python3","do3.py",doo,v.child_tbl_name)
-		//py.Stdout = os.Stdout
-		// Run 和 Start只能用一个
-		// Run starts the specified command and waits for it to complete.
-
 		stderr := &bytes.Buffer{}
 		stdout := &bytes.Buffer{}
 		py.Stderr = stderr
